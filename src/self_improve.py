@@ -8,6 +8,15 @@ critic = Critic()
 optimizer_model = Adam(model.parameters(), lr=1e-4)
 optimizer_critic = Adam(critic.parameters(), lr=1e-4)  # added critic optimizer
 
+# Added function to update critic parameters based on evaluation (Task 36)
+def update_critic(cand):
+    bh = model(cand, output_hidden_states=True).hidden_states[-1]
+    target = torch.ones(1, device=bh.device)  # baseline target
+    loss = F.mse_loss(critic(bh).mean(), target)
+    optimizer_critic.zero_grad()
+    loss.backward()
+    optimizer_critic.step()
+
 # Task 26: Self-consistency via candidate sampling and Task 31: Selecting best candidate with highest reward
 def self_improve(prompt, num_candidates=5):
     model.eval()
@@ -22,13 +31,10 @@ def self_improve(prompt, num_candidates=5):
     optimizer_model.zero_grad()
     loss.backward()
     optimizer_model.step()
-    # Critic update mechanism (Task 35): use MSE loss against a baseline target of 1.0
-    bh = model(best, output_hidden_states=True).hidden_states[-1]
-    target = torch.ones(1, device=bh.device)
-    optimizer_critic.zero_grad()
-    closs = F.mse_loss(critic(bh).mean(), target)
-    closs.backward()
-    optimizer_critic.step()
+    
+    # Update critic parameters based on evaluation (Task 36)
+    update_critic(best)
+    
     return best
 
 if __name__ == '__main__':
