@@ -144,35 +144,39 @@ def update_model(optimizer, reward):
 # Updated self_improve function using modularized components
 
 def self_improve(prompt, num_candidates=5):
-    # Tokenize the input prompt (now expected as a string)
-    input_ids = tokenizer.encode(prompt, return_tensors='pt')
+    # Tokenize prompt (assumed to be a string)
+    input_ids = tokenizer.encode(prompt, return_tensors='pt').to(device)
     model.eval()
     candidates = []
-    rewards = []
-    for _ in range(num_candidates):
-        gen_ids = model.generate(input_ids, max_length=50, do_sample=True)
-        candidates.append(gen_ids)
-    model.train()
-    for cand in candidates:
-        outputs = model(cand, output_hidden_states=True)
-        hidden = outputs.hidden_states[-1]
-        reward = critic(hidden)
-        rewards.append(reward)
-    best_index = torch.argmax(torch.stack(rewards))
-    best_candidate = candidates[best_index]
-    baseline = torch.stack(rewards).mean()  # Compute baseline reward
-    advantage = rewards[best_index] - baseline  # Advantage
-    outputs = model(best_candidate, labels=best_candidate)  # Compute log probability loss
-    loss = advantage * outputs.loss  # REINFORCE with baseline loss
-    optimizer_model.zero_grad()
-    loss.backward()
-    torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
-    optimizer_model.step()
-    scheduler_model.step()
-    update_critic(best_candidate, rewards[best_index])
 
-    # Decode the best candidate tokens into text
-    return tokenizer.decode(best_candidate[0], skip_special_tokens=True)
+    # Best-of-N sampling candidates
+    sampling_candidates = generate_candidates(model, {"input_ids": input_ids, "attention_mask": torch.ones_like(input_ids)}, num_candidates=num_candidates)
+    candidates.extend(sampling_candidates)
+
+    # Beam search candidate
+    beam_candidate = model.generate(input_ids,
+                                    attention_mask=torch.ones_like(input_ids),
+                                    num_beams=5,
+                                    early_stopping=True,
+                                    max_length=MAX_NEW_TOKENS,
+                                    pad_token_id=_tokenizer.eos_token_id)
+    candidates.append(beam_candidate)
+
+    # Lookahead candidate via MCTS expansion
+    lookahead_candidate, _ = mcts_expand(input_ids)
+    candidates.append(lookahead_candidate)
+
+    # Evaluate candidates
+    rewards = evaluate_candidates(model, critic, candidates)
+    combined_rewards = torch.stack([r.mean() for r in rewards])
+    best_index = torch.argmax(combined_rewards)
+    best_candidate = candidates[best_index]
+
+    # RL update using the best candidate's reward
+    _ = update_model(optimizer_model, rewards[best_index])
+    scheduler_model.step()
+
+    return best_candidate
 
 # Insert helper functions for richer reward shaping
 
