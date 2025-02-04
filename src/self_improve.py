@@ -17,25 +17,15 @@ def update_critic(cand):
     loss.backward()
     optimizer_critic.step()
 
-# Task 26: Self-consistency via candidate sampling and Task 31: Selecting best candidate with highest reward
+# Task 37: Minimal self-improvement loop implementation
 def self_improve(prompt, num_candidates=5):
     model.eval()
-    with torch.no_grad():
-        cands = [model.generate(prompt, max_length=50, do_sample=True) for _ in range(num_candidates)]
+    with torch.no_grad(): cands = [model.generate(prompt, max_length=50, do_sample=True) for _ in range(num_candidates)]
     model.train()
-    # Compute rewards using critic on extracted hidden states
-    rewards = torch.stack([critic(model(c, output_hidden_states=True).hidden_states[-1]).mean() for c in cands])
-    best_idx = torch.argmax(rewards)  # select index with the highest reward
-    best = cands[best_idx]
-    loss = -rewards[best_idx]  # RL update: negative reward loss
-    optimizer_model.zero_grad()
-    loss.backward()
-    optimizer_model.step()
-    
-    # Update critic parameters based on evaluation (Task 36)
-    update_critic(best)
-    
-    return best
+    r = torch.stack([critic(model(c, output_hidden_states=True).hidden_states[-1]).mean() for c in cands])
+    optimizer_model.zero_grad(); (-r.max()).backward(); optimizer_model.step()
+    update_critic(cands[r.argmax().item()])
+    return cands[r.argmax().item()]
 
 if __name__ == '__main__':
     import sys
