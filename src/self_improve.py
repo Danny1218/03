@@ -46,10 +46,12 @@ def self_improve(prompt, num_candidates=5):
     candidates = []
     rewards = []
     
-    # Generate multiple candidate responses using augmented prompt
+    # Generate multiple candidate responses using chain-of-thought reasoning:
+    chain_prompt = augmented_prompt + "\nPlease provide your chain-of-thought reasoning, step-by-step, and then output your Final Answer in the format 'Final Answer: <answer>'"
     for _ in range(num_candidates):
-        outputs = model.generate(augmented_prompt, max_length=50, do_sample=True)
-        candidates.append(outputs)
+        outputs = model.generate(chain_prompt, max_length=150, do_sample=True)
+        final_text = extract_final_answer(outputs)
+        candidates.append(final_text)
     
     model.train()
     
