@@ -9,6 +9,9 @@ class Critic(nn.Module):
             nn.TransformerEncoderLayer(d_model=hidden_size, nhead=nhead),
             num_layers=num_layers
         )
+        self.layer1 = nn.Linear(hidden_size, hidden_size)
+        self.norm1 = nn.LayerNorm(hidden_size)
+        self.act = nn.ReLU()
         self.fc = nn.Linear(hidden_size, 1)
         self.register_buffer('baseline', torch.zeros(1))
         self.decay = 0.99
@@ -19,7 +22,10 @@ class Critic(nn.Module):
         x = hidden_states.transpose(0, 1)
         x = self.transformer(x)
         # Aggregate information via average pooling
-        x = x.mean(dim=0)  
+        pooled = x.mean(dim=0)  
+        x = self.layer1(pooled)
+        x = self.norm1(x)
+        x = self.act(x)
         raw_score = self.fc(x)
         norm_score = raw_score - self.baseline
         if self.training:
