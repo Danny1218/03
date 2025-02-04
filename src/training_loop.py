@@ -133,8 +133,11 @@ def self_improve(prompt):
         mcts_r = None
     final_reward = mcts_r if mcts_r is not None else rewards[best_index]
     model.train()
-    outputs = model(best_candidate, labels=best_candidate)
-    loss_rl = final_reward * outputs.loss
+    outputs = model(best_candidate, labels=best_candidate, output_hidden_states=True)  # get hidden states
+    with torch.no_grad():
+        baseline = critic(outputs.hidden_states[-1]).mean()
+    advantage = final_reward - baseline
+    loss_rl = -advantage * outputs.loss
     optimizer_model.zero_grad()
     loss_rl.backward()
     optimizer_model.step()
