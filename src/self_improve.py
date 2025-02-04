@@ -15,11 +15,15 @@ def generate_candidates(prompt, num_candidates=5):
     model.train()
     return candidates
 
-# Task 26: Incorporated self-consistency by sampling multiple responses and choosing the candidate with the highest critic score
+# Task 28: Extract hidden states from candidate outputs
+def extract_hidden(candidate):
+    return model(candidate, output_hidden_states=True).hidden_states[-1]
+
+# Task 26 & 28: Incorporated self-consistency and hidden state extraction
 def self_improve(prompt, num_candidates=5):
     # Self-consistency: sample multiple outputs and select best based on critic evaluation
     cands = generate_candidates(prompt, num_candidates)
-    scores = torch.stack([critic(model(c, output_hidden_states=True).hidden_states[-1]).mean() for c in cands])
+    scores = torch.stack([critic(extract_hidden(c)).mean() for c in cands])
     best = cands[torch.argmax(scores)]
     loss = -scores.max()
     optimizer_model.zero_grad()
