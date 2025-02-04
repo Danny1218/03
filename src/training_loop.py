@@ -77,7 +77,7 @@ def save_checkpoint(step=None):
 
 
 def mcts_expand(node, sims=MCTS_SIMS):
-    children = [model.generate(node, attention_mask=torch.ones_like(node), max_new_tokens=MAX_NEW_TOKENS, do_sample=True, pad_token_id=_tokenizer.eos_token_id) for _ in range(sims)]
+    children = [model.generate(node, attention_mask=torch.ones_like(node), max_new_tokens=MAX_NEW_TOKENS, do_sample=True, top_k=50, top_p=0.95, pad_token_id=_tokenizer.eos_token_id) for _ in range(sims)]
     rewards = [critic(model(child, output_hidden_states=True).hidden_states[-1]).mean() for child in children]
     best_index = torch.argmax(torch.stack(rewards))
     return children[best_index], rewards[best_index]
@@ -93,6 +93,7 @@ def self_improve(prompt):
                                       attention_mask=prompt['attention_mask'], 
                                       max_new_tokens=MAX_NEW_TOKENS, 
                                       do_sample=True, 
+                                      top_k=50, top_p=0.95,
                                       pad_token_id=_tokenizer.eos_token_id)
             if cand is None or cand.numel() == 0:
                 raise ValueError('Generation returned empty candidate')
