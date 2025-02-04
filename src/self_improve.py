@@ -3,6 +3,11 @@ from transformer_model import model
 from critic import Critic
 import torch  # added for self_improve function
 import torch.nn.functional as F  # added for critic update
+import logging
+from transformers import GPT2Tokenizer
+
+logging.basicConfig(level=logging.INFO)
+_tokenizer = GPT2Tokenizer.from_pretrained('gpt2')
 
 critic = Critic()
 optimizer_model = Adam(model.parameters(), lr=1e-4)
@@ -27,7 +32,10 @@ def self_improve(prompt, num_candidates=5):
         out = model(cand, output_hidden_states=True)
         candidates.append(cand)
         rewards.append(critic(out.hidden_states[-1]).mean())
+    for i, cand in enumerate(candidates):
+        logging.info("Candidate %d: %s, reward: %.4f", i, _tokenizer.decode(cand[0], skip_special_tokens=True), rewards[i].item())
     best_index = torch.argmax(torch.stack(rewards)).item()
+    logging.info("Selected candidate %d with reward: %.4f", best_index, rewards[best_index].item())
     best_candidate = candidates[best_index]
 
     model.train()
@@ -42,9 +50,7 @@ def self_improve(prompt, num_candidates=5):
 
 if __name__ == '__main__':
     import sys
-    from transformers import GPT2Tokenizer
-    tokenizer = GPT2Tokenizer.from_pretrained('gpt2')
     prompt_text = ' '.join(sys.argv[1:]) if len(sys.argv) > 1 else input('Enter prompt: ')
-    prompt = tokenizer.encode(prompt_text, return_tensors='pt')
+    prompt = _tokenizer.encode(prompt_text, return_tensors='pt')
     improved = self_improve(prompt)
-    print(tokenizer.decode(improved[0], skip_special_tokens=True)) 
+    print(f"Improved prompt: {_tokenizer.decode(improved[0], skip_special_tokens=True)}") 
