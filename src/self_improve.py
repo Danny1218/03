@@ -17,20 +17,22 @@ def update_critic(cand):
     loss.backward()
     optimizer_critic.step()
 
-# Task 38: Integrate reinforcement learning update steps
+# Task 38-39: Integrated candidate evaluation within a loop
 def self_improve(prompt, num_candidates=5):
     model.eval()
-    with torch.no_grad():
-        cands = [model.generate(prompt, max_length=50, do_sample=True) for _ in range(num_candidates)]
-    model.train()
-    rewards = torch.stack([critic(model(c, output_hidden_states=True).hidden_states[-1]).mean() for c in cands])
-    best_index = rewards.argmax().item()
-    best_reward = rewards[best_index]
-    best_candidate = cands[best_index]
+    candidates, rewards = [], []
+    for _ in range(num_candidates):
+        with torch.no_grad():
+            cand = model.generate(prompt, max_length=50, do_sample=True)
+        out = model(cand, output_hidden_states=True)
+        candidates.append(cand)
+        rewards.append(critic(out.hidden_states[-1]).mean())
+    best_index = torch.argmax(torch.stack(rewards)).item()
+    best_candidate = candidates[best_index]
 
-    # Compute teacher-forcing loss on best candidate weighted by its critic reward
+    model.train()
     outputs = model(best_candidate, labels=best_candidate)
-    loss_rl = best_reward * outputs.loss
+    loss_rl = rewards[best_index] * outputs.loss
     optimizer_model.zero_grad()
     loss_rl.backward()
     optimizer_model.step()
