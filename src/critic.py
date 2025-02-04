@@ -2,18 +2,25 @@ import torch
 from torch import nn
 
 class Critic(nn.Module):
-    def __init__(self, hidden_size=128):
+    def __init__(self, hidden_size=128, nhead=4, num_layers=1):
         super().__init__()
+        # Enhanced critic using a transformer encoder for attention
+        self.transformer = nn.TransformerEncoder(
+            nn.TransformerEncoderLayer(d_model=hidden_size, nhead=nhead),
+            num_layers=num_layers
+        )
         self.fc = nn.Linear(hidden_size, 1)
         self.register_buffer('baseline', torch.zeros(1))
         self.decay = 0.99
 
     def forward(self, hidden_states):
-        avg_pool = hidden_states.mean(dim=1)
-        max_pool, _ = hidden_states.max(dim=1)
-        std_pool = hidden_states.std(dim=1)
-        combined = (avg_pool + max_pool + std_pool) / 3
-        raw_score = self.fc(combined)
+        # hidden_states: [batch, seq_len, hidden_size]
+        # transpose for transformer: [seq_len, batch, hidden_size]
+        x = hidden_states.transpose(0, 1)
+        x = self.transformer(x)
+        # Aggregate information via average pooling
+        x = x.mean(dim=0)  
+        raw_score = self.fc(x)
         norm_score = raw_score - self.baseline
         if self.training:
             self.baseline.mul_(self.decay).add_((1 - self.decay) * raw_score.detach().mean())
