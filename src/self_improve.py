@@ -26,22 +26,28 @@ def retrieve_knowledge_context(prompt):
     return "External context: Recent AI advances show improved factual grounding with retrieval augmentation."
 
 
+# Added helper function for extracting final answer from chain-of-thought generation
+def extract_final_answer(generated_text: str) -> str:
+    # If 'Final Answer:' marker exists, extract text after it; otherwise, return full text
+    if 'Final Answer:' in generated_text:
+        return generated_text.split('Final Answer:')[-1].strip()
+    return generated_text.strip()
+
+
 def self_improve(prompt, num_candidates=5):
     logger.info("Starting self_improve with %d candidates", num_candidates)
+    model.eval()
     candidates = []
     rewards = []
     
-    # Candidate generation with error handling and timing
+    # Generate candidates with integrated chain-of-thought reasoning
     for _ in range(num_candidates):
-        ext_context = retrieve_knowledge_context(prompt)
-        augmented_prompt = prompt + " " + ext_context  # Augment the prompt with external knowledge
-        start = time.time()
-        try:
-            outputs = model.generate(augmented_prompt, max_length=50, do_sample=True, temperature=0.7, top_k=50, top_p=0.92)
-            candidates.append(outputs)
-            logger.info("Candidate %d generated in %.4f sec", _, time.time()-start)
-        except Exception as e:
-            logger.error("Candidate %d generation failed: %s", _, e)
+        # Append chain-of-thought trigger to encourage internal reasoning
+        prompt_with_cot = prompt + "\nChain-of-Thought:"
+        # Increase max_length for allowing chain-of-thought reasoning
+        outputs = model.generate(prompt_with_cot, max_length=100, do_sample=True)
+        final_output = extract_final_answer(outputs)
+        candidates.append(final_output)
     
     model.train()
     
