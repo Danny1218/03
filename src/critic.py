@@ -2,11 +2,11 @@ import torch
 from torch import nn
 
 class Critic(nn.Module):
-    def __init__(self, hidden_size=128, nhead=4, num_layers=1):
+    def __init__(self, hidden_size=128, nhead=4, num_layers=2, dropout=0.1):
         super().__init__()
-        # Enhanced critic using a transformer encoder for attention
+        # Enhanced critic using a transformer encoder for attention with dropout and additional layers
         self.transformer = nn.TransformerEncoder(
-            nn.TransformerEncoderLayer(d_model=hidden_size, nhead=nhead),
+            nn.TransformerEncoderLayer(d_model=hidden_size, nhead=nhead, dropout=dropout),
             num_layers=num_layers
         )
         self.layer1 = nn.Linear(hidden_size, hidden_size)
