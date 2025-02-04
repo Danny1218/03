@@ -112,11 +112,34 @@ def generate_candidates(prompt):
         raise RuntimeError('No valid candidates generated')
     return candidates
 
+# Insert helper functions for richer reward shaping
 
+def score_fluency(text):
+    words = text.split()
+    return min(1.0, len(words)/50) if words else 0.0
+
+
+def score_coherence(text):
+    words = text.split()
+    return len(set(words))/len(words) if words else 0.0
+
+
+def score_factuality(text):
+    sentences = text.split('.')
+    return min(1.0, len(sentences)/5) if sentences else 0.0
+
+# Updated evaluate_candidate function with richer reward shaping
 def evaluate_candidate(cand):
     try:
         out = model(cand, output_hidden_states=True)
-        return critic(out.hidden_states[-1]).mean()
+        base_reward = critic(out.hidden_states[-1]).mean()
+        candidate_text = _tokenizer.decode(cand[0], skip_special_tokens=True)
+        fluency = score_fluency(candidate_text)
+        coherence = score_coherence(candidate_text)
+        factuality = score_factuality(candidate_text)
+        # Combine base reward with additional metrics (50% base, 16.67% each for fluency, coherence, factuality)
+        final_reward = 0.5 * base_reward + 0.1667 * (fluency + coherence + factuality)
+        return final_reward
     except Exception as e:
         logging.error('Evaluation failed: %s', e)
         return None
