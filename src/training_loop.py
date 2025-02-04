@@ -1,3 +1,7 @@
+if __package__ is None:
+    import sys, os
+    sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '..'))
+
 import logging
 import logging.config
 import torch
