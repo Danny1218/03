@@ -19,11 +19,14 @@ def generate_candidates(prompt, num_candidates=5):
 def extract_hidden(candidate):
     return model(candidate, output_hidden_states=True).hidden_states[-1]
 
-# Task 26 & 28: Incorporated self-consistency and hidden state extraction
+def evaluate_candidates(candidates):
+    # Task 29: Evaluate candidates using critic network and compute rewards
+    return torch.stack([critic(extract_hidden(c)).mean() for c in candidates])
+
+# Task 26 & 28 & 29: Incorporated self-consistency, hidden state extraction and candidate evaluation
 def self_improve(prompt, num_candidates=5):
-    # Self-consistency: sample multiple outputs and select best based on critic evaluation
     cands = generate_candidates(prompt, num_candidates)
-    scores = torch.stack([critic(extract_hidden(c)).mean() for c in cands])
+    scores = evaluate_candidates(cands)
     best = cands[torch.argmax(scores)]
     loss = -scores.max()
     optimizer_model.zero_grad()
