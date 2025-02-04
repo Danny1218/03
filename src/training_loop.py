@@ -31,9 +31,11 @@ optimizer_critic = Adam(critic.parameters(), lr=LEARNING_RATE)
 
 def update_critic(cand):
     bh = model(cand, output_hidden_states=True).hidden_states[-1]
-    target = torch.ones(1, device=bh.device)  # baseline target
+    target = torch.tensor(1.0, device=bh.device)  # baseline target as a scalar
     loss = F.mse_loss(critic(bh).mean(), target)
-    optimizer_critic.zero_grad(); loss.backward(); optimizer_critic.step()
+    optimizer_critic.zero_grad()
+    loss.backward()
+    optimizer_critic.step()
 
 
 def mcts_expand(node, sims=MCTS_SIMS):
