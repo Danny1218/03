@@ -154,8 +154,10 @@ def self_improve(prompt, num_candidates=5):
         rewards.append(reward)
     best_index = torch.argmax(torch.stack(rewards))
     best_candidate = candidates[best_index]
-    # RL update step remains unchanged
-    loss = -rewards[best_index].mean()
+    baseline = torch.stack(rewards).mean()  # Compute baseline reward
+    advantage = rewards[best_index] - baseline  # Advantage
+    outputs = model(best_candidate, labels=best_candidate)  # Compute log probability loss
+    loss = advantage * outputs.loss  # REINFORCE with baseline loss
     optimizer_model.zero_grad()
     loss.backward()
     optimizer_model.step()
@@ -231,29 +233,17 @@ def self_improve(prompt):
     avg_loss = sum(candidate_losses)/len(candidate_losses)
     logging.info("Metrics: Candidate Losses - Avg: %.4f, Min: %.4f, Max: %.4f", avg_loss, min(candidate_losses), max(candidate_losses))
 
-    best_index = torch.argmax(torch.stack(rewards)).item()
-    logging.info('Selected candidate %d with reward: %.4f', best_index, rewards[best_index].item())
+    best_index = torch.argmax(torch.stack(rewards))
     best_candidate = candidates[best_index]
-    try:
-        best_candidate, mcts_r = mcts_expand(best_candidate)
-        if mcts_r is not None:
-            logging.info('MCTS updated candidate reward: %.4f', mcts_r.item())
-    except Exception as e:
-        logging.error('MCTS expansion failed: %s', e)
-        mcts_r = None
-    final_reward = mcts_r if mcts_r is not None else rewards[best_index]
-    model.train()
-    outputs = model(best_candidate, labels=best_candidate)
-    logging.info("Metrics: Loss (before RL update): %.4f", outputs.loss.item())
-    loss_rl = -final_reward.detach() * outputs.loss
-    logging.info("Metrics: RL Loss: %.4f", loss_rl.item())
-    logging.info("Metrics: Perplexity: %.4f", torch.exp(outputs.loss).item())
+    baseline = torch.stack(rewards).mean()  # Compute baseline reward
+    advantage = rewards[best_index] - baseline  # Advantage
+    outputs = model(best_candidate, labels=best_candidate)  # Compute log probability loss
+    loss = advantage * outputs.loss  # REINFORCE with baseline loss
     optimizer_model.zero_grad()
-    loss_rl.backward()
-    torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
+    loss.backward()
     optimizer_model.step()
     scheduler_model.step()
-    update_critic(best_candidate, final_reward)
+    update_critic(best_candidate, rewards[best_index])
 
     # Prepare metrics dictionary for checkpointing
     metrics = {
@@ -272,8 +262,8 @@ def self_improve(prompt):
     save_checkpoint(metrics=metrics)
 
     # Logging metrics
-    writer.add_scalar('Loss', loss_rl.item(), global_step)
-    writer.add_scalar('BestReward', final_reward.item(), global_step)
+    writer.add_scalar('Loss', loss.item(), global_step)
+    writer.add_scalar('BestReward', rewards[best_index].item(), global_step)
     var_diversity = len(set([str(c) for c in candidates]))
     writer.add_scalar('CandidateDiversity', var_diversity, global_step)
     global_step += 1
