@@ -17,6 +17,7 @@ from torch.optim import Adam
 from transformers import GPT2Tokenizer
 from torch.optim.lr_scheduler import StepLR
 from torch.utils.tensorboard import SummaryWriter
+from torch.cuda.amp import autocast, GradScaler
 
 from src.transformer_model import model
 from src.critic import Critic
@@ -79,6 +80,9 @@ optimizer_critic = Adam(critic.parameters(), lr=LEARNING_RATE)
 # Added scheduler initialization for stability improvements
 scheduler_model = StepLR(optimizer_model, step_size=10, gamma=0.95)
 scheduler_critic = StepLR(optimizer_critic, step_size=10, gamma=0.95)
+
+# Initialize GradScaler
+scaler = GradScaler()
 
 def update_critic(cand, target_reward):
     bh = model(cand, output_hidden_states=True).hidden_states[-1]
@@ -195,9 +199,11 @@ def self_improve(prompt, num_candidates=5):
     outputs = model(best_candidate, labels=best_candidate)  # Compute log probability loss
     loss = advantage * outputs.loss  # REINFORCE with baseline loss
     optimizer_model.zero_grad()
-    loss.backward()
+    scaler.scale(loss).backward()
+    scaler.unscale_(optimizer_model)
     torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
-    optimizer_model.step()
+    scaler.step(optimizer_model)
+    scaler.update()
     scheduler_model.step()
     update_critic(best_candidate, rewards[best_index])
 
@@ -245,4 +251,7 @@ if __name__ == '__main__':
     print(f"Improved prompt: {improved}")
 
 # At the end of the training, close the TensorBoard writer
-writer.close() 
+writer.close()
+
+# After training, apply dynamic quantization for faster inference
+model = torch.quantization.quantize_dynamic(model, {torch.nn.Linear}, dtype=torch.qint8)  # quantize linear layers 
