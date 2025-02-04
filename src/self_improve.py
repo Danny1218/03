@@ -25,5 +25,10 @@ def self_improve(prompt, num_candidates=5):
     return best
 
 if __name__ == '__main__':
-    print('Model Optimizer:', optimizer_model)
-    print('Critic Optimizer:', optimizer_critic) 
+    import sys
+    from transformers import GPT2Tokenizer
+    tokenizer = GPT2Tokenizer.from_pretrained('gpt2')
+    prompt_text = ' '.join(sys.argv[1:]) if len(sys.argv) > 1 else input('Enter prompt: ')
+    prompt = tokenizer.encode(prompt_text, return_tensors='pt')
+    improved = self_improve(prompt)
+    print(tokenizer.decode(improved[0], skip_special_tokens=True)) 
