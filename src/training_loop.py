@@ -9,6 +9,7 @@ import torch.nn.functional as F
 from torch.optim import Adam
 from transformers import GPT2Tokenizer
 from torch.optim.lr_scheduler import StepLR
+from torch.utils.tensorboard import SummaryWriter
 
 from src.transformer_model import model
 from src.critic import Critic
@@ -52,6 +53,9 @@ model.to(device)
 # Initialize critic and move to device
 critic = Critic()
 critic.to(device)
+
+writer = SummaryWriter()
+global_step = 0
 
 def preprocess(text):
     tokens = _tokenizer(text, return_tensors='pt', padding=True, truncation=True, max_length=128)
@@ -170,6 +174,7 @@ def evaluate_candidate(cand):
 # Updated self_improve function incorporating modular candidate generation and evaluation
 
 def self_improve(prompt):
+    global global_step
     model.eval()
     candidates = generate_candidates(prompt)
     rewards = []
@@ -220,8 +225,9 @@ def self_improve(prompt):
     loss_rl = final_reward * outputs.loss
     logging.info("Metrics: RL Loss: %.4f", loss_rl.item())
     logging.info("Metrics: Perplexity: %.4f", torch.exp(outputs.loss).item())
+    loss = -final_reward.mean()
     optimizer_model.zero_grad()
-    loss_rl.backward()
+    loss.backward()
     torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
     optimizer_model.step()
     scheduler_model.step()
@@ -242,6 +248,14 @@ def self_improve(prompt):
     }
 
     save_checkpoint(metrics=metrics)
+
+    # Logging metrics
+    writer.add_scalar('Loss', loss.item(), global_step)
+    writer.add_scalar('BestReward', final_reward.item(), global_step)
+    var_diversity = len(set([str(c) for c in candidates]))
+    writer.add_scalar('CandidateDiversity', var_diversity, global_step)
+    global_step += 1
+
     return best_candidate
 
 if __name__ == '__main__':
