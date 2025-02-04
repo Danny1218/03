@@ -1,17 +1,23 @@
 import torch
-import torch.nn as nn
+from torch import nn
 
 class Critic(nn.Module):
     def __init__(self, hidden_size=128):
         super().__init__()
-        # Enhanced two-layer architecture
-        self.fc1 = nn.Linear(hidden_size, hidden_size // 2)
-        self.fc2 = nn.Linear(hidden_size // 2, 1)
+        self.fc = nn.Linear(hidden_size, 1)
+        self.register_buffer('baseline', torch.zeros(1))
+        self.decay = 0.99
 
     def forward(self, hidden_states):
-        pooled = hidden_states.mean(dim=1)  # average pooling
-        x = torch.relu(self.fc1(pooled))
-        return self.fc2(x)
+        avg_pool = hidden_states.mean(dim=1)
+        max_pool, _ = hidden_states.max(dim=1)
+        std_pool = hidden_states.std(dim=1)
+        combined = (avg_pool + max_pool + std_pool) / 3
+        raw_score = self.fc(combined)
+        norm_score = raw_score - self.baseline
+        if self.training:
+            self.baseline.mul_(self.decay).add_((1 - self.decay) * raw_score.detach().mean())
+        return norm_score
 
     def compute_loss(self, predictions, targets):
         # Compute normalized MSE loss for critic training
