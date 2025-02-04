@@ -15,9 +15,9 @@ if not logger.handlers:
 if __package__ is None:
     import sys, os
     sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '..'))
-    from src.training_loop import preprocess, _tokenizer, model, critic, optimizer_model
+    from src.training_loop import preprocess, _tokenizer, model, critic, optimizer_model, optimizer_critic
 else:
-    from .training_loop import preprocess, _tokenizer, model, critic, optimizer_model
+    from .training_loop import preprocess, _tokenizer, model, critic, optimizer_model, optimizer_critic
 
 
 def retrieve_knowledge_context(prompt):
@@ -49,13 +49,45 @@ def self_improve(prompt, num_candidates=5):
     
     model.train()
     
+    # Compute rewards for each candidate using the critic
+    rewards = []
+    for cand in candidates:
+        input_ids = _tokenizer.encode(cand, return_tensors='pt')
+        outputs = model(input_ids, output_hidden_states=True)
+        hidden = outputs.hidden_states[-1]
+        candidate_reward = critic(hidden.mean(dim=1))
+        rewards.append(candidate_reward)
+
     # Voting system: select candidate with highest pairwise word overlap
     def vote_score(text):
         words = set(text.split())
         return sum(len(words & set(other.split())) for other in candidates if other != text)
 
-    best_candidate = max(candidates, key=vote_score)
-    
+    best_index = torch.argmax(torch.stack(rewards))
+    best_candidate = candidates[best_index]
+
+    # Direct Preference Optimization RL update: pairwise ranking loss
+    stacked_rewards = torch.stack(rewards)  # assumed shape: (num_candidates, 1)
+    loss = 0
+    num_pairs = 0
+    for i in range(len(candidates)):
+        for j in range(i+1, len(candidates)):
+            diff = stacked_rewards[i] - stacked_rewards[j]
+            loss += -torch.log(torch.sigmoid(diff))
+            num_pairs += 1
+    loss /= num_pairs
+    optimizer_model.zero_grad()
+    loss.backward()
+    optimizer_model.step()
+
+    # Critic update using simulated human feedback: best candidate is preferred (target=1), others 0
+    target = torch.zeros(len(candidates), 1)
+    target[best_index] = 1.0
+    critic_loss = torch.nn.BCEWithLogitsLoss()(stacked_rewards, target)
+    optimizer_critic.zero_grad()
+    critic_loss.backward()
+    optimizer_critic.step()
+
     return best_candidate
 
 
