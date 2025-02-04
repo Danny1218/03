@@ -115,25 +115,46 @@ def mcts_expand(node, sims=MCTS_SIMS):
 # New helper functions for modularization
 
 def generate_candidates(model, prompt, num_candidates=5, max_length=50):
-    # Generate candidate responses using sampling
+    # Integrate chain-of-thought prompting for self-consistency
     model.eval()
     candidates = []
+    cot_instruction = " Let's think step by step and then answer:"
+    # Append chain-of-thought instruction to the prompt
+    cot_tokens = _tokenizer(cot_instruction, return_tensors='pt').input_ids.to(device)
+    chain_input_ids = torch.cat([prompt['input_ids'], cot_tokens], dim=1)
+    chain_attention_mask = torch.cat([prompt['attention_mask'], torch.ones_like(cot_tokens)], dim=1)
     for _ in range(num_candidates):
-        outputs = model.generate(prompt['input_ids'], attention_mask=prompt['attention_mask'], max_length=max_length, do_sample=True, pad_token_id=_tokenizer.eos_token_id)
-        candidates.append(outputs)
+        candidate = model.generate(
+            chain_input_ids,
+            attention_mask=chain_attention_mask,
+            max_length=chain_input_ids.shape[1] + max_length,
+            do_sample=True,
+            top_k=50,
+            top_p=0.95,
+            pad_token_id=_tokenizer.eos_token_id
+        )
+        candidates.append(candidate)
     return candidates
 
 
 def evaluate_candidates(model, critic, candidates):
-    # Evaluate generated candidates and compute a reward for each
+    # Evaluate candidates to compute a reward and extract final answers for self-consistency
     rewards = []
+    final_answers = []
     model.train()  # switch back for gradient computation
     for cand in candidates:
         outputs = model(cand, output_hidden_states=True)
         hidden = outputs.hidden_states[-1]  # last layer hidden states
         reward = critic(hidden)
         rewards.append(reward)
-    return rewards
+        decoded = _tokenizer.decode(cand[0], skip_special_tokens=True)
+        marker = "then answer:"
+        if marker in decoded:
+            final = decoded.split(marker, 1)[1].strip()
+        else:
+            final = decoded.strip()
+        final_answers.append(final)
+    return rewards, final_answers
 
 
 def update_model(optimizer, reward):
@@ -176,10 +197,20 @@ def self_improve(prompt, num_candidates=5):
     lookahead_candidate, _ = mcts_expand(input_ids)
     candidates.append(lookahead_candidate)
 
-    # Evaluate candidates
-    rewards = evaluate_candidates(model, critic, candidates)
-    combined_rewards = torch.stack([r.mean() for r in rewards])
-    best_index = torch.argmax(combined_rewards)
+    # Evaluate candidates along with extracted final answers for self-consistency re-ranking
+    rewards, final_answers = evaluate_candidates(model, critic, candidates)
+    from collections import Counter
+    counts = Counter(final_answers)
+    best_index = None
+    best_consensus_answer, freq = counts.most_common(1)[0]
+    if freq > 1:
+        for i, ans in enumerate(final_answers):
+            if ans == best_consensus_answer:
+                best_index = i
+                break
+    if best_index is None:
+        combined_rewards = torch.stack([r.mean() for r in rewards])
+        best_index = torch.argmax(combined_rewards)
     best_candidate = candidates[best_index]
 
     # Sequential revision loop: if candidate reward is below a threshold, iteratively refine using mcts_expand
