@@ -90,13 +90,18 @@ def mcts_expand(node, sims=MCTS_SIMS):
 
 def generate_candidates(prompt):
     candidates = []
+    base_temp = 0.7  # Base temperature for dynamic control
     for i in range(NUM_CANDIDATES):
         try:
             with torch.no_grad():
+                temperature = base_temp + i * 0.05  # dynamic temperature per candidate
                 cand = model.generate(prompt['input_ids'],
                                       attention_mask=prompt['attention_mask'],
                                       max_new_tokens=MAX_NEW_TOKENS,
                                       do_sample=True,
+                                      temperature=temperature,
+                                      top_p=0.95,
+                                      top_k=50,
                                       pad_token_id=_tokenizer.eos_token_id)
             if cand is None or cand.numel() == 0:
                 raise ValueError('Generation returned empty candidate')
