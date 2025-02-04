@@ -13,4 +13,7 @@ class Critic(nn.Module):
 if __name__ == '__main__':
     critic = Critic()
     sample = torch.randn(2, 10, 128)  # batch=2, sequence length=10, hidden_size=128
-    print(critic(sample)) 
+    output = critic(sample)
+    print(output)
+    assert output.shape == (2, 1), f"Expected shape (2, 1), got {output.shape}"
+    print("Critic output validated.") 
