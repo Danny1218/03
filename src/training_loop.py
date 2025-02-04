@@ -150,12 +150,14 @@ def self_improve(prompt):
     final_reward = mcts_r if mcts_r is not None else rewards[best_index]
     model.train()
     outputs = model(best_candidate, labels=best_candidate)
-    logging.info("Metrics: Loss (before RL update): %.4f", outputs.loss.item())
-    loss_rl = final_reward * outputs.loss
-    logging.info("Metrics: RL Loss: %.4f", loss_rl.item())
+    seq_length = best_candidate.shape[1]
+    log_prob_sum = - outputs.loss * seq_length
+    advantage = final_reward - avg_reward
+    policy_loss = - advantage * log_prob_sum
+    logging.info("Metrics: Policy Loss: %.4f", policy_loss.item())
     logging.info("Metrics: Perplexity: %.4f", torch.exp(outputs.loss).item())
     optimizer_model.zero_grad()
-    loss_rl.backward()
+    policy_loss.backward()
     optimizer_model.step()
     update_critic(best_candidate)
     save_checkpoint()
