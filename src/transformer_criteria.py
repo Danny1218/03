@@ -3,6 +3,7 @@ CRITERIA = {"max_params":50e6, "embedding_size":128, "num_layers":4, "num_heads"
 
 # Task 12 complete: embedding size set to 128 and layer count set to 4
 # Task 13 complete: attention heads set to 4
+# Task 14 complete: vocabulary size defined as 50257
 
 def get_config():
     from transformers import GPT2Config
