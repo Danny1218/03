@@ -117,23 +117,25 @@ def evaluate_candidate(cand):
 def self_improve(prompt):
     model.eval()
     candidates = generate_candidates(prompt)
-    candidate_rewards = []
+    rewards = []
     for cand in candidates:
         reward = evaluate_candidate(cand)
         if reward is not None:
-            candidate_rewards.append((cand, reward))
-    if not candidate_rewards:
+            rewards.append(reward)
+    if not rewards:
         raise RuntimeError('No valid candidates evaluated')
-    for i, (cand, reward) in enumerate(candidate_rewards):
+    avg_reward = torch.stack(rewards).mean()
+    logging.info("Metrics: Average Candidate Reward: %.4f", avg_reward.item())
+    for i, cand in enumerate(candidates):
         try:
             decoded = _tokenizer.decode(cand[0], skip_special_tokens=True)
         except Exception as e:
             decoded = '<Decoding failed>'
             logging.error('Decoding candidate %d failed: %s', i, e)
-        logging.info('Candidate %d: %s, reward: %.4f', i, decoded, reward.item())
-    best_index = torch.argmax(torch.stack([r for _, r in candidate_rewards])).item()
-    logging.info('Selected candidate %d with reward: %.4f', best_index, candidate_rewards[best_index][1].item())
-    best_candidate = candidate_rewards[best_index][0]
+        logging.info('Candidate %d: %s, reward: %.4f', i, decoded, rewards[i].item())
+    best_index = torch.argmax(torch.stack(rewards)).item()
+    logging.info('Selected candidate %d with reward: %.4f', best_index, rewards[best_index].item())
+    best_candidate = candidates[best_index]
     try:
         best_candidate, mcts_r = mcts_expand(best_candidate)
         if mcts_r is not None:
@@ -141,10 +143,13 @@ def self_improve(prompt):
     except Exception as e:
         logging.error('MCTS expansion failed: %s', e)
         mcts_r = None
-    final_reward = mcts_r if mcts_r is not None else candidate_rewards[best_index][1]
+    final_reward = mcts_r if mcts_r is not None else rewards[best_index]
     model.train()
     outputs = model(best_candidate, labels=best_candidate)
+    logging.info("Metrics: Loss (before RL update): %.4f", outputs.loss.item())
     loss_rl = final_reward * outputs.loss
+    logging.info("Metrics: RL Loss: %.4f", loss_rl.item())
+    logging.info("Metrics: Perplexity: %.4f", torch.exp(outputs.loss).item())
     optimizer_model.zero_grad()
     loss_rl.backward()
     optimizer_model.step()
