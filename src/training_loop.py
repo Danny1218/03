@@ -83,7 +83,7 @@ scheduler_critic = StepLR(optimizer_critic, step_size=10, gamma=0.95)
 def update_critic(cand, target_reward):
     bh = model(cand, output_hidden_states=True).hidden_states[-1]
     optimizer_critic.zero_grad()
-    loss = F.mse_loss(critic(bh).mean(), target_reward.detach())
+    loss = F.mse_loss(critic(bh).mean(), target_reward.detach().mean())
     loss.backward()
     torch.nn.utils.clip_grad_norm_(critic.parameters(), 1.0)
     optimizer_critic.step()
@@ -144,18 +144,24 @@ def update_model(optimizer, reward):
 # Updated self_improve function using modularized components
 
 def self_improve(prompt, num_candidates=5):
-    # Tokenize prompt (assumed to be a string)
-    input_ids = tokenizer.encode(prompt, return_tensors='pt').to(device)
+    global global_step
+    # If prompt is a string, tokenize it; if already tokenized, use it directly.
+    if isinstance(prompt, dict) and 'input_ids' in prompt and 'attention_mask' in prompt:
+         input_ids = prompt['input_ids']
+         attn_mask = prompt['attention_mask']
+    else:
+         input_ids = tokenizer.encode(prompt, return_tensors='pt').to(device)
+         attn_mask = torch.ones_like(input_ids)
     model.eval()
     candidates = []
 
     # Best-of-N sampling candidates
-    sampling_candidates = generate_candidates(model, {"input_ids": input_ids, "attention_mask": torch.ones_like(input_ids)}, num_candidates=num_candidates)
+    sampling_candidates = generate_candidates(model, {"input_ids": input_ids, "attention_mask": attn_mask}, num_candidates=num_candidates)
     candidates.extend(sampling_candidates)
 
     # Beam search candidate
     beam_candidate = model.generate(input_ids,
-                                    attention_mask=torch.ones_like(input_ids),
+                                    attention_mask=attn_mask,
                                     num_beams=5,
                                     early_stopping=True,
                                     max_length=MAX_NEW_TOKENS,
@@ -172,83 +178,18 @@ def self_improve(prompt, num_candidates=5):
     best_index = torch.argmax(combined_rewards)
     best_candidate = candidates[best_index]
 
-    # RL update using the best candidate's reward
-    _ = update_model(optimizer_model, rewards[best_index])
-    scheduler_model.step()
-
-    return best_candidate
-
-# Insert helper functions for richer reward shaping
-
-def score_fluency(text):
-    words = text.split()
-    return min(1.0, len(words)/50) if words else 0.0
-
-
-def score_coherence(text):
-    words = text.split()
-    return len(set(words))/len(words) if words else 0.0
-
-
-def score_factuality(text):
-    sentences = text.split('.')
-    return min(1.0, len(sentences)/5) if sentences else 0.0
-
-# Updated evaluate_candidate function with richer reward shaping
-def evaluate_candidate(cand):
-    try:
-        out = model(cand, output_hidden_states=True)
-        base_reward = critic(out.hidden_states[-1]).mean()
-        candidate_text = _tokenizer.decode(cand[0], skip_special_tokens=True)
-        fluency = score_fluency(candidate_text)
-        coherence = score_coherence(candidate_text)
-        factuality = score_factuality(candidate_text)
-        # Combine base reward with additional metrics (50% base, 16.67% each for fluency, coherence, factuality)
-        final_reward = 0.5 * base_reward + 0.1667 * (fluency + coherence + factuality)
-        return final_reward
-    except Exception as e:
-        logging.error('Evaluation failed: %s', e)
-        return None
-
-# Updated self_improve function incorporating modular candidate generation and evaluation
-
-def self_improve(prompt):
-    global global_step
-    model.eval()
-    candidates = generate_candidates(model, prompt)
-    rewards = []
-    for cand in candidates:
-        reward = evaluate_candidate(cand)
-        if reward is not None:
-            rewards.append(reward)
-    if not rewards:
-        raise RuntimeError('No valid candidates evaluated')
-    avg_reward = torch.stack(rewards).mean()
-    logging.info("Metrics: Average Candidate Reward: %.4f", avg_reward.item())
-    for i, cand in enumerate(candidates):
-        try:
-            decoded = _tokenizer.decode(cand[0], skip_special_tokens=True)
-        except Exception as e:
-            decoded = '<Decoding failed>'
-            logging.error('Decoding candidate %d failed: %s', i, e)
-        logging.info('Candidate %d: %s, reward: %.4f', i, decoded, rewards[i].item())
-
-    # Log aggregated reward distribution
-    reward_values = [r.item() for r in rewards]
-    logging.info("Metrics: Candidate Rewards - Avg: %.4f, Min: %.4f, Max: %.4f", sum(reward_values)/len(reward_values), min(reward_values), max(reward_values))
-
-    # Compute and log candidate losses
-    candidate_losses = []
-    for i, cand in enumerate(candidates):
-        with torch.no_grad():
-            loss_val = model(cand, labels=cand).loss.item()
-        candidate_losses.append(loss_val)
-        logging.info("Metrics: Candidate %d Loss: %.4f", i, loss_val)
-    avg_loss = sum(candidate_losses)/len(candidate_losses)
-    logging.info("Metrics: Candidate Losses - Avg: %.4f, Min: %.4f, Max: %.4f", avg_loss, min(candidate_losses), max(candidate_losses))
-
-    best_index = torch.argmax(torch.stack(rewards))
-    best_candidate = candidates[best_index]
+    # Sequential revision loop: if candidate reward is below a threshold, iteratively refine using mcts_expand
+    REVISION_REWARD_THRESHOLD = 0.1  # desired minimum reward
+    MAX_REVISION_STEPS = 3
+    revised_reward = rewards[best_index]
+    revision_step = 0
+    candidate = best_candidate
+    while revised_reward < REVISION_REWARD_THRESHOLD and revision_step < MAX_REVISION_STEPS:
+        candidate, revised_reward = mcts_expand(candidate)
+        logging.info("Revision step %d: candidate reward improved to %.4f", revision_step+1, revised_reward.item())
+        revision_step += 1
+    best_candidate = candidate
+    
     baseline = torch.stack(rewards).mean()  # Compute baseline reward
     advantage = rewards[best_index] - baseline  # Advantage
     outputs = model(best_candidate, labels=best_candidate)  # Compute log probability loss
@@ -263,14 +204,14 @@ def self_improve(prompt):
     # Prepare metrics dictionary for checkpointing
     metrics = {
         "candidate_rewards": {
-            "avg": sum(reward_values)/len(reward_values),
-            "min": min(reward_values),
-            "max": max(reward_values),
+            "avg": sum(rewards)/len(rewards),
+            "min": min(rewards),
+            "max": max(rewards),
         },
         "candidate_losses": {
-            "avg": avg_loss,
-            "min": min(candidate_losses),
-            "max": max(candidate_losses),
+            "avg": loss.item(),
+            "min": loss.item(),
+            "max": loss.item(),
         }
     }
 
@@ -284,14 +225,14 @@ def self_improve(prompt):
     global_step += 1
 
     # Added TensorBoard logging
-    writer.add_scalar("CandidateRewards/Average", avg_reward.item(), global_step)
+    writer.add_scalar("CandidateRewards/Average", sum(rewards)/len(rewards), global_step)
     writer.add_scalar("Metrics/Perplexity", torch.exp(outputs.loss).item(), global_step)
 
     # Logging metrics to TensorBoard
     writer.add_scalar("Loss/RL", loss.item(), global_step)
     writer.add_scalar("Loss/Total", loss.item(), global_step)
     writer.add_scalar("Metrics/Perplexity", torch.exp(outputs.loss).item(), global_step)
-    writer.add_scalar("Reward/Average", avg_reward.item(), global_step)
+    writer.add_scalar("Reward/Average", sum(rewards)/len(rewards), global_step)
     global_step += 1
 
     return tokenizer.decode(best_candidate[0], skip_special_tokens=True)
