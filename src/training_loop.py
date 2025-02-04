@@ -54,7 +54,9 @@ model.to(device)
 critic = Critic()
 critic.to(device)
 
-writer = SummaryWriter()
+# Initialize TensorBoard writer
+writer = SummaryWriter(log_dir="runs/tensorboard_logs")
+
 global_step = 0
 
 def preprocess(text):
@@ -256,6 +258,10 @@ def self_improve(prompt):
     writer.add_scalar('CandidateDiversity', var_diversity, global_step)
     global_step += 1
 
+    # Added TensorBoard logging
+    writer.add_scalar("CandidateRewards/Average", avg_reward.item(), global_step)
+    writer.add_scalar("Metrics/Perplexity", torch.exp(outputs.loss).item(), global_step)
+
     return best_candidate
 
 if __name__ == '__main__':
@@ -263,4 +269,7 @@ if __name__ == '__main__':
     prompt_text = ' '.join(sys.argv[1:]) if len(sys.argv) > 1 else input('Enter prompt: ')
     prompt = preprocess(prompt_text)
     improved = self_improve(prompt)
-    print(f"Improved prompt: {_tokenizer.decode(improved[0], skip_special_tokens=True)}") 
+    print(f"Improved prompt: {_tokenizer.decode(improved[0], skip_special_tokens=True)}")
+
+# At the end of the training, close the TensorBoard writer
+writer.close() 
