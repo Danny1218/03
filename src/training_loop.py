@@ -59,6 +59,9 @@ writer = SummaryWriter(log_dir="runs/tensorboard_logs")
 
 global_step = 0
 
+# Initialize the tokenizer globally
+tokenizer = GPT2Tokenizer.from_pretrained('gpt2')
+
 def preprocess(text):
     tokens = _tokenizer(text, return_tensors='pt', padding=True, truncation=True, max_length=128)
     return {k: v.to(device) for k, v in tokens.items()}
@@ -135,12 +138,29 @@ def update_model(optimizer, reward):
 # Updated self_improve function using modularized components
 
 def self_improve(prompt, num_candidates=5):
-    candidates = generate_candidates(model, prompt, num_candidates)
-    rewards = evaluate_candidates(model, critic, candidates)
+    # Tokenize the input prompt (now expected as a string)
+    input_ids = tokenizer.encode(prompt, return_tensors='pt')
+    model.eval()
+    candidates = []
+    rewards = []
+    for _ in range(num_candidates):
+        gen_ids = model.generate(input_ids, max_length=50, do_sample=True)
+        candidates.append(gen_ids)
+    model.train()
+    for cand in candidates:
+        outputs = model(cand, output_hidden_states=True)
+        hidden = outputs.hidden_states[-1]
+        reward = critic(hidden)
+        rewards.append(reward)
     best_index = torch.argmax(torch.stack(rewards))
     best_candidate = candidates[best_index]
-    loss = update_model(optimizer_model, rewards[best_index])
-    return best_candidate  # Optionally, could also return loss if needed
+    # RL update step remains unchanged
+    loss = -rewards[best_index].mean()
+    optimizer_model.zero_grad()
+    loss.backward()
+    optimizer_model.step()
+    # Decode the best candidate tokens into text
+    return tokenizer.decode(best_candidate[0], skip_special_tokens=True)
 
 # Insert helper functions for richer reward shaping
 
@@ -262,14 +282,14 @@ def self_improve(prompt):
     writer.add_scalar("CandidateRewards/Average", avg_reward.item(), global_step)
     writer.add_scalar("Metrics/Perplexity", torch.exp(outputs.loss).item(), global_step)
 
-    return best_candidate
+    return tokenizer.decode(best_candidate[0], skip_special_tokens=True)
 
 if __name__ == '__main__':
     import sys
     prompt_text = ' '.join(sys.argv[1:]) if len(sys.argv) > 1 else input('Enter prompt: ')
     prompt = preprocess(prompt_text)
     improved = self_improve(prompt)
-    print(f"Improved prompt: {_tokenizer.decode(improved[0], skip_special_tokens=True)}")
+    print(f"Improved prompt: {improved}")
 
 # At the end of the training, close the TensorBoard writer
 writer.close() 
