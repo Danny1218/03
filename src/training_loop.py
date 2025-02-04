@@ -107,7 +107,7 @@ def save_checkpoint(step=None, metrics=None):
 
 
 def mcts_expand(node, sims=MCTS_SIMS):
-    children = [model.generate(node, attention_mask=torch.ones_like(node), max_new_tokens=MAX_NEW_TOKENS, do_sample=True, top_k=50, top_p=0.95, pad_token_id=_tokenizer.eos_token_id) for _ in range(sims)]
+    children = [model.generate(node, attention_mask=torch.ones_like(node), max_new_tokens=MAX_NEW_TOKENS, do_sample=True, top_k=50, top_p=0.9, no_repeat_ngram_size=4, temperature=0.7, repetition_penalty=1.5, pad_token_id=_tokenizer.eos_token_id) for _ in range(sims)]
     rewards = [critic(model(child, output_hidden_states=True).hidden_states[-1]).mean() for child in children]
     best_index = torch.argmax(torch.stack(rewards))
     return children[best_index], rewards[best_index]
@@ -130,7 +130,10 @@ def generate_candidates(model, prompt, num_candidates=5, max_length=50):
             max_length=chain_input_ids.shape[1] + max_length,
             do_sample=True,
             top_k=50,
-            top_p=0.95,
+            top_p=0.9,
+            no_repeat_ngram_size=4,
+            temperature=0.7,
+            repetition_penalty=1.5,
             pad_token_id=_tokenizer.eos_token_id
         )
         candidates.append(candidate)
@@ -157,9 +160,15 @@ def evaluate_candidates(model, critic, candidates):
     return rewards, final_answers
 
 
-def update_model(optimizer, reward):
-    # Perform a simple policy gradient update using the negative reward
-    loss = -reward.mean()
+def update_model(optimizer, model, candidate, old_log_prob, reward, epsilon=0.2):
+    # PPO update: compute new log probability for candidate tokens
+    logits = model(candidate[:, :-1]).logits
+    log_probs = torch.nn.functional.log_softmax(logits, dim=-1)
+    new_log_prob = log_probs.gather(2, candidate[:, 1:].unsqueeze(-1)).squeeze(-1).sum(dim=1)
+    ratio = torch.exp(new_log_prob - old_log_prob)
+    surrogate1 = ratio * reward
+    surrogate2 = torch.clamp(ratio, 1 - epsilon, 1 + epsilon) * reward
+    loss = -torch.min(surrogate1, surrogate2).mean()
     optimizer.zero_grad()
     loss.backward()
     optimizer.step()
@@ -190,6 +199,8 @@ def self_improve(prompt, num_candidates=5):
                                     num_beams=5,
                                     early_stopping=True,
                                     max_length=MAX_NEW_TOKENS,
+                                    no_repeat_ngram_size=4,
+                                    repetition_penalty=1.5,
                                     pad_token_id=_tokenizer.eos_token_id)
     candidates.append(beam_candidate)
 
@@ -201,16 +212,8 @@ def self_improve(prompt, num_candidates=5):
     rewards, final_answers = evaluate_candidates(model, critic, candidates)
     from collections import Counter
     counts = Counter(final_answers)
-    best_index = None
-    best_consensus_answer, freq = counts.most_common(1)[0]
-    if freq > 1:
-        for i, ans in enumerate(final_answers):
-            if ans == best_consensus_answer:
-                best_index = i
-                break
-    if best_index is None:
-        combined_rewards = torch.stack([r.mean() for r in rewards])
-        best_index = torch.argmax(combined_rewards)
+    best_index = torch.argmax(torch.stack(rewards))
+    best_reward = rewards[best_index]
     best_candidate = candidates[best_index]
 
     # Sequential revision loop: if candidate reward is below a threshold, iteratively refine using mcts_expand
@@ -225,53 +228,37 @@ def self_improve(prompt, num_candidates=5):
         revision_step += 1
     best_candidate = candidate
     
-    baseline = torch.stack(rewards).mean()  # Compute baseline reward
-    advantage = rewards[best_index] - baseline  # Advantage
-    outputs = model(best_candidate, labels=best_candidate)  # Compute log probability loss
-    loss = advantage * outputs.loss  # REINFORCE with baseline loss
-    optimizer_model.zero_grad()
-    scaler.scale(loss).backward()
-    scaler.unscale_(optimizer_model)
-    torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
-    scaler.step(optimizer_model)
-    scaler.update()
-    scheduler_model.step()
-    update_critic(best_candidate, rewards[best_index])
+    # --- PPO update step: Update model using reward feedback ---
+    model.eval()
+    with torch.no_grad():
+         logits = model(best_candidate[:, :-1]).logits
+         log_probs = torch.nn.functional.log_softmax(logits, dim=-1)
+         old_log_prob = log_probs.gather(2, best_candidate[:, 1:].unsqueeze(-1)).squeeze(-1).sum(dim=1)
+    model.train()
+    loss = update_model(optimizer_model, model, best_candidate, old_log_prob, best_reward.detach())
 
-    # Prepare metrics dictionary for checkpointing
+    # Prepare metrics and checkpoint logging using PPO loss
     metrics = {
         "candidate_rewards": {
-            "avg": sum(rewards)/len(rewards),
-            "min": min(rewards),
-            "max": max(rewards),
+            "avg": (sum(rewards)/len(rewards)).item(),
+            "min": min(rewards).item(),
+            "max": max(rewards).item()
         },
-        "candidate_losses": {
-            "avg": loss.item(),
-            "min": loss.item(),
-            "max": loss.item(),
-        }
+        "ppo_loss": loss.item()
     }
 
     save_checkpoint(metrics=metrics)
 
-    # Logging metrics
-    writer.add_scalar('Loss', loss.item(), global_step)
+    writer.add_scalar('PPO_Loss', loss.item(), global_step)
     writer.add_scalar('BestReward', rewards[best_index].item(), global_step)
     var_diversity = len(set([str(c) for c in candidates]))
     writer.add_scalar('CandidateDiversity', var_diversity, global_step)
     global_step += 1
-
-    # Added TensorBoard logging
-    writer.add_scalar("CandidateRewards/Average", sum(rewards)/len(rewards), global_step)
-    writer.add_scalar("Metrics/Perplexity", torch.exp(outputs.loss).item(), global_step)
-
-    # Logging metrics to TensorBoard
-    writer.add_scalar("Loss/RL", loss.item(), global_step)
-    writer.add_scalar("Loss/Total", loss.item(), global_step)
-    writer.add_scalar("Metrics/Perplexity", torch.exp(outputs.loss).item(), global_step)
-    writer.add_scalar("Reward/Average", sum(rewards)/len(rewards), global_step)
+    writer.add_scalar("CandidateRewards/Average", (sum(rewards)/len(rewards)).item(), global_step)
+    writer.add_scalar("Reward/Average", (sum(rewards)/len(rewards)).item(), global_step)
     global_step += 1
 
+    # --- End PPO update step ---
     return tokenizer.decode(best_candidate[0], skip_special_tokens=True)
 
 if __name__ == '__main__':
