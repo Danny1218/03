@@ -20,6 +20,11 @@ else:
     from .training_loop import preprocess, _tokenizer, model, critic, optimizer_model, optimizer_critic
 
 
+def retrieve_knowledge(prompt):
+    # Minimal RAG: using hardcoded external knowledge
+    return "External knowledge: Latest research shows retrieval augments reasoning and factual correctness."
+
+
 def retrieve_knowledge_context(prompt):
     # Minimal stub for external retrieval.
     # In production, replace with API call or knowledge base query.
@@ -35,22 +40,20 @@ def extract_final_answer(generated_text: str) -> str:
 
 
 def self_improve(prompt, num_candidates=5):
-    logger.info("Starting self_improve with %d candidates", num_candidates)
+    retrieved = retrieve_knowledge(prompt)  # Retrieve external knowledge
+    augmented_prompt = retrieved + "\n" + str(prompt)  # Augment prompt with external info
     model.eval()
     candidates = []
+    rewards = []
     
-    # Generate candidates with chain-of-thought reasoning
+    # Generate multiple candidate responses using augmented prompt
     for _ in range(num_candidates):
-        # Generate candidate with chain-of-thought reasoning
-        input_prompt = prompt + " Let's think step by step:"
-        outputs = model.generate(input_prompt, max_length=100, do_sample=True)
-        candidate = _tokenizer.decode(outputs[0], skip_special_tokens=True)
-        candidates.append(candidate)
+        outputs = model.generate(augmented_prompt, max_length=50, do_sample=True)
+        candidates.append(outputs)
     
     model.train()
     
     # Compute rewards for each candidate using the critic
-    rewards = []
     for cand in candidates:
         input_ids = _tokenizer.encode(cand, return_tensors='pt')
         outputs = model(input_ids, output_hidden_states=True)
