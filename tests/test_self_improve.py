@@ -3,15 +3,15 @@ import sys
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 import torch
 from transformers import GPT2Tokenizer
-from src.self_improve import self_improve
+from src.self_improve import self_improve, preprocess, _tokenizer
 
 
 def test_self_improve():
-    tokenizer = GPT2Tokenizer.from_pretrained('gpt2')
-    prompt = tokenizer.encode('Synthetic prompt for testing', return_tensors='pt')
-    output = self_improve(prompt)
-    decoded = tokenizer.decode(output[0], skip_special_tokens=True)
-    assert decoded, 'Output should be a non-empty string'
+    torch.manual_seed(42)  # set seed for reproducibility
+    prompt = preprocess('Test prompt')
+    result = self_improve(prompt, num_candidates=2)
+    decoded = _tokenizer.decode(result[0], skip_special_tokens=True)
+    assert decoded.strip(), 'self_improve should return non-empty output'
 
 
 if __name__ == '__main__':
