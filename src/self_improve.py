@@ -15,7 +15,7 @@ def self_improve(prompt, num_candidates=5):
     # Compute rewards using critic on extracted hidden states
     rewards = torch.stack([critic(model(c, output_hidden_states=True).hidden_states[-1]).mean() for c in cands])
     best = cands[torch.argmax(rewards)]  # Task 31: select the candidate with the highest reward
-    loss = -torch.max(rewards)
+    loss = -rewards[torch.argmax(rewards)]
     optimizer_model.zero_grad()
     loss.backward()
     optimizer_model.step()
