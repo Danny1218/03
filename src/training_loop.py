@@ -82,48 +82,58 @@ def mcts_expand(node, sims=MCTS_SIMS):
     best_index = torch.argmax(torch.stack(rewards))
     return children[best_index], rewards[best_index]
 
+# Added helper functions to modularize candidate generation and evaluation
 
-def self_improve(prompt):
-    model.eval()
-    candidates, rewards = [], []
+def generate_candidates(prompt):
+    candidates = []
     for i in range(NUM_CANDIDATES):
         try:
             with torch.no_grad():
-                cand = model.generate(prompt['input_ids'], 
-                                      attention_mask=prompt['attention_mask'], 
-                                      max_new_tokens=MAX_NEW_TOKENS, 
-                                      do_sample=True, 
-                                      top_k=50, top_p=0.95,
+                cand = model.generate(prompt['input_ids'],
+                                      attention_mask=prompt['attention_mask'],
+                                      max_new_tokens=MAX_NEW_TOKENS,
+                                      do_sample=True,
                                       pad_token_id=_tokenizer.eos_token_id)
             if cand is None or cand.numel() == 0:
                 raise ValueError('Generation returned empty candidate')
+            candidates.append(cand)
         except Exception as e:
             logging.error('Candidate generation failed at attempt %d: %s', i, e)
-            continue
-        try:
-            out = model(cand, output_hidden_states=True)
-        except Exception as e:
-            logging.error('Candidate evaluation failed at attempt %d: %s', i, e)
-            continue
-        try:
-            candidate_reward = critic(out.hidden_states[-1]).mean()
-        except Exception as e:
-            logging.error('Critic evaluation failed for candidate %d: %s', i, e)
-            continue
-        candidates.append(cand)
-        rewards.append(candidate_reward)
     if not candidates:
         raise RuntimeError('No valid candidates generated')
-    for i, cand in enumerate(candidates):
+    return candidates
+
+
+def evaluate_candidate(cand):
+    try:
+        out = model(cand, output_hidden_states=True)
+        return critic(out.hidden_states[-1]).mean()
+    except Exception as e:
+        logging.error('Evaluation failed: %s', e)
+        return None
+
+# Updated self_improve function incorporating modular candidate generation and evaluation
+
+def self_improve(prompt):
+    model.eval()
+    candidates = generate_candidates(prompt)
+    candidate_rewards = []
+    for cand in candidates:
+        reward = evaluate_candidate(cand)
+        if reward is not None:
+            candidate_rewards.append((cand, reward))
+    if not candidate_rewards:
+        raise RuntimeError('No valid candidates evaluated')
+    for i, (cand, reward) in enumerate(candidate_rewards):
         try:
             decoded = _tokenizer.decode(cand[0], skip_special_tokens=True)
         except Exception as e:
             decoded = '<Decoding failed>'
             logging.error('Decoding candidate %d failed: %s', i, e)
-        logging.info('Candidate %d: %s, reward: %.4f', i, decoded, rewards[i].item())
-    best_index = torch.argmax(torch.stack(rewards)).item()
-    logging.info('Selected candidate %d with reward: %.4f', best_index, rewards[best_index].item())
-    best_candidate = candidates[best_index]
+        logging.info('Candidate %d: %s, reward: %.4f', i, decoded, reward.item())
+    best_index = torch.argmax(torch.stack([r for _, r in candidate_rewards])).item()
+    logging.info('Selected candidate %d with reward: %.4f', best_index, candidate_rewards[best_index][1].item())
+    best_candidate = candidate_rewards[best_index][0]
     try:
         best_candidate, mcts_r = mcts_expand(best_candidate)
         if mcts_r is not None:
@@ -131,19 +141,14 @@ def self_improve(prompt):
     except Exception as e:
         logging.error('MCTS expansion failed: %s', e)
         mcts_r = None
-    final_reward = mcts_r if mcts_r is not None else rewards[best_index]
+    final_reward = mcts_r if mcts_r is not None else candidate_rewards[best_index][1]
     model.train()
-    outputs = model(best_candidate, labels=best_candidate, output_hidden_states=True)  # get hidden states
-    with torch.no_grad():
-        baseline = critic(outputs.hidden_states[-1]).mean()
-    advantage = final_reward - baseline
-    loss_rl = -advantage * outputs.loss
+    outputs = model(best_candidate, labels=best_candidate)
+    loss_rl = final_reward * outputs.loss
     optimizer_model.zero_grad()
     loss_rl.backward()
     optimizer_model.step()
     update_critic(best_candidate)
-
-    # Save model and critic checkpoints after update
     save_checkpoint()
     return best_candidate
 
