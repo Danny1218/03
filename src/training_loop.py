@@ -14,7 +14,7 @@ import logging.config
 import torch
 import torch.nn.functional as F
 from torch.optim import Adam
-from transformers import GPT2Tokenizer
+from transformers import GPT2TokenizerFast
 from torch.optim.lr_scheduler import StepLR
 from torch.utils.tensorboard import SummaryWriter
 from torch.cuda.amp import autocast, GradScaler
@@ -24,7 +24,7 @@ from src.critic import Critic
 from src.config import LEARNING_RATE, NUM_CANDIDATES, MAX_NEW_TOKENS, MCTS_SIMS, MODEL_NAME, LOG_LEVEL, LOG_FILE
 
 # Setup logging and tokenizer
-_tokenizer = GPT2Tokenizer.from_pretrained(MODEL_NAME)
+_tokenizer = GPT2TokenizerFast.from_pretrained(MODEL_NAME)
 _tokenizer.pad_token = _tokenizer.eos_token
 logging_config = {
     'version': 1,
@@ -67,7 +67,7 @@ writer = SummaryWriter(log_dir="runs/tensorboard_logs")
 global_step = 0
 
 # Initialize the tokenizer globally
-tokenizer = GPT2Tokenizer.from_pretrained('gpt2')
+tokenizer = GPT2TokenizerFast.from_pretrained('gpt2')
 
 def preprocess(text):
     tokens = _tokenizer(text, return_tensors='pt', padding=True, truncation=True, max_length=128)

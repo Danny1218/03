@@ -37,7 +37,7 @@ def self_improve(prompt, num_candidates=5):
         augmented_prompt = prompt + " " + ext_context  # Augment the prompt with external knowledge
         start = time.time()
         try:
-            outputs = model.generate(augmented_prompt, max_length=50, do_sample=True)
+            outputs = model.generate(augmented_prompt, max_length=50, do_sample=True, temperature=0.7, top_k=50, top_p=0.92)
             candidates.append(outputs)
             logger.info("Candidate %d generated in %.4f sec", _, time.time()-start)
         except Exception as e:
