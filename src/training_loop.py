@@ -109,6 +109,22 @@ def generate_candidates(prompt):
             candidates.append(cand)
         except Exception as e:
             logging.error('Candidate generation failed at attempt %d: %s', i, e)
+
+    # Additional candidate generation using beam search for diversity
+    try:
+        with torch.no_grad():
+            cand_beam = model.generate(prompt['input_ids'],
+                                       attention_mask=prompt['attention_mask'],
+                                       max_new_tokens=MAX_NEW_TOKENS,
+                                       num_beams=5,
+                                       do_sample=False,
+                                       pad_token_id=_tokenizer.eos_token_id)
+        if cand_beam is None or cand_beam.numel() == 0:
+            raise ValueError('Beam search generation returned empty candidate')
+        candidates.append(cand_beam)
+    except Exception as e:
+        logging.error('Beam search candidate generation failed: %s', e)
+
     if not candidates:
         raise RuntimeError('No valid candidates generated')
     return candidates
