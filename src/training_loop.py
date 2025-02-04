@@ -97,47 +97,48 @@ def mcts_expand(node, sims=MCTS_SIMS):
     best_index = torch.argmax(torch.stack(rewards))
     return children[best_index], rewards[best_index]
 
-# Added helper functions to modularize candidate generation and evaluation
+# New helper functions for modularization
 
-def generate_candidates(prompt):
+def generate_candidates(model, prompt, num_candidates=5, max_length=50):
+    # Generate candidate responses using sampling
+    model.eval()
     candidates = []
-    base_temp = 0.7  # Base temperature for dynamic control
-    for i in range(NUM_CANDIDATES):
-        try:
-            with torch.no_grad():
-                temperature = base_temp + i * 0.05  # dynamic temperature per candidate
-                cand = model.generate(prompt['input_ids'],
-                                      attention_mask=prompt['attention_mask'],
-                                      max_new_tokens=MAX_NEW_TOKENS,
-                                      do_sample=True,
-                                      temperature=temperature,
-                                      top_p=0.95,
-                                      top_k=50,
-                                      pad_token_id=_tokenizer.eos_token_id)
-            if cand is None or cand.numel() == 0:
-                raise ValueError('Generation returned empty candidate')
-            candidates.append(cand)
-        except Exception as e:
-            logging.error('Candidate generation failed at attempt %d: %s', i, e)
-
-    # Additional candidate generation using beam search for diversity
-    try:
-        with torch.no_grad():
-            cand_beam = model.generate(prompt['input_ids'],
-                                       attention_mask=prompt['attention_mask'],
-                                       max_new_tokens=MAX_NEW_TOKENS,
-                                       num_beams=5,
-                                       do_sample=False,
-                                       pad_token_id=_tokenizer.eos_token_id)
-        if cand_beam is None or cand_beam.numel() == 0:
-            raise ValueError('Beam search generation returned empty candidate')
-        candidates.append(cand_beam)
-    except Exception as e:
-        logging.error('Beam search candidate generation failed: %s', e)
-
-    if not candidates:
-        raise RuntimeError('No valid candidates generated')
+    for _ in range(num_candidates):
+        outputs = model.generate(prompt['input_ids'], attention_mask=prompt['attention_mask'], max_length=max_length, do_sample=True, pad_token_id=_tokenizer.eos_token_id)
+        candidates.append(outputs)
     return candidates
+
+
+def evaluate_candidates(model, critic, candidates):
+    # Evaluate generated candidates and compute a reward for each
+    rewards = []
+    model.train()  # switch back for gradient computation
+    for cand in candidates:
+        outputs = model(cand, output_hidden_states=True)
+        hidden = outputs.hidden_states[-1]  # last layer hidden states
+        reward = critic(hidden)
+        rewards.append(reward)
+    return rewards
+
+
+def update_model(optimizer, reward):
+    # Perform a simple policy gradient update using the negative reward
+    loss = -reward.mean()
+    optimizer.zero_grad()
+    loss.backward()
+    optimizer.step()
+    return loss
+
+
+# Updated self_improve function using modularized components
+
+def self_improve(prompt, num_candidates=5):
+    candidates = generate_candidates(model, prompt, num_candidates)
+    rewards = evaluate_candidates(model, critic, candidates)
+    best_index = torch.argmax(torch.stack(rewards))
+    best_candidate = candidates[best_index]
+    loss = update_model(optimizer_model, rewards[best_index])
+    return best_candidate  # Optionally, could also return loss if needed
 
 # Insert helper functions for richer reward shaping
 
@@ -176,7 +177,7 @@ def evaluate_candidate(cand):
 def self_improve(prompt):
     global global_step
     model.eval()
-    candidates = generate_candidates(prompt)
+    candidates = generate_candidates(model, prompt)
     rewards = []
     for cand in candidates:
         reward = evaluate_candidate(cand)
