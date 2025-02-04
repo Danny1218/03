@@ -25,6 +25,23 @@ def update_critic(cand):
     loss.backward()
     optimizer_critic.step()
 
+# Added minimal MCTS expansion function
+def mcts_expand(node, simulations=2):
+    children, rewards = [], []
+    for _ in range(simulations):
+        try:
+            with torch.no_grad():
+                child = model.generate(node, max_length=50, do_sample=True)
+            out = model(child, output_hidden_states=True)
+            children.append(child)
+            rewards.append(critic(out.hidden_states[-1]).mean())
+        except Exception as e:
+            logging.error("MCTS error: %s", e)
+    if children:
+        best_idx = torch.argmax(torch.stack(rewards)).item()
+        return children[best_idx], rewards[best_idx]
+    return node, None
+
 # Task 38-39: Integrated candidate evaluation within a loop
 def self_improve(prompt, num_candidates=5):
     model.eval()
@@ -49,9 +66,15 @@ def self_improve(prompt, num_candidates=5):
     logging.info("Selected candidate %d with reward: %.4f", best_index, rewards[best_index].item())
     best_candidate = candidates[best_index]
 
+    # MCTS expansion step
+    best_candidate, mcts_r = mcts_expand(best_candidate, simulations=2)
+    if mcts_r is not None:
+        logging.info("MCTS updated candidate reward: %.4f", mcts_r.item())
+
+    final_reward = mcts_r if mcts_r is not None else rewards[best_index]
     model.train()
     outputs = model(best_candidate, labels=best_candidate)
-    loss_rl = rewards[best_index] * outputs.loss
+    loss_rl = final_reward * outputs.loss
     optimizer_model.zero_grad()
     loss_rl.backward()
     optimizer_model.step()
