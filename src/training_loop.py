@@ -112,17 +112,23 @@ def mcts_expand(node, sims=MCTS_SIMS):
     best_index = torch.argmax(torch.stack(rewards))
     return children[best_index], rewards[best_index]
 
+## Retrieval augmentation helper function
+def retrieve_context(query):
+    # Simulate retrieval: In production, integrate a retrieval system.
+    return " Factual context: The Eiffel Tower is in Paris. Water freezes at 0°C."
+
 # New helper functions for modularization
 
 def generate_candidates(model, prompt, num_candidates=5, max_length=50):
-    # Integrate chain-of-thought prompting for self-consistency
+    # Retrieve external factual context and append chain-of-thought instruction
+    retrieval_text = retrieve_context(_tokenizer.decode(prompt['input_ids'][0], skip_special_tokens=True))
+    retrieval_tokens = _tokenizer(retrieval_text, return_tensors='pt').input_ids.to(device)
+    cot_instruction = " Let's think step by step and then answer:"
+    cot_tokens = _tokenizer(cot_instruction, return_tensors='pt').input_ids.to(device)
+    chain_input_ids = torch.cat([prompt['input_ids'], retrieval_tokens, cot_tokens], dim=1)
+    chain_attention_mask = torch.cat([prompt['attention_mask'], torch.ones_like(retrieval_tokens), torch.ones_like(cot_tokens)], dim=1)
     model.eval()
     candidates = []
-    cot_instruction = " Let's think step by step and then answer:"
-    # Append chain-of-thought instruction to the prompt
-    cot_tokens = _tokenizer(cot_instruction, return_tensors='pt').input_ids.to(device)
-    chain_input_ids = torch.cat([prompt['input_ids'], cot_tokens], dim=1)
-    chain_attention_mask = torch.cat([prompt['attention_mask'], torch.ones_like(cot_tokens)], dim=1)
     for _ in range(num_candidates):
         candidate = model.generate(
             chain_input_ids,
