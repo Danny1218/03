@@ -67,14 +67,14 @@ def update_critic(cand):
     loss.backward()
     optimizer_critic.step()
 
-# Added checkpoint saving function
-
-def save_checkpoint(step=None):
+# Modified save_checkpoint to include metrics
+def save_checkpoint(step=None, metrics=None):
     checkpoint = {
         "model_state_dict": model.state_dict(),
         "critic_state_dict": critic.state_dict(),
         "optimizer_model_state": optimizer_model.state_dict(),
         "optimizer_critic_state": optimizer_critic.state_dict(),
+        "metrics": metrics,
     }
     fname = f"checkpoint_{step}.pt" if step is not None else "checkpoint.pt"
     torch.save(checkpoint, fname)
@@ -165,6 +165,21 @@ def self_improve(prompt):
             decoded = '<Decoding failed>'
             logging.error('Decoding candidate %d failed: %s', i, e)
         logging.info('Candidate %d: %s, reward: %.4f', i, decoded, rewards[i].item())
+
+    # Log aggregated reward distribution
+    reward_values = [r.item() for r in rewards]
+    logging.info("Metrics: Candidate Rewards - Avg: %.4f, Min: %.4f, Max: %.4f", sum(reward_values)/len(reward_values), min(reward_values), max(reward_values))
+
+    # Compute and log candidate losses
+    candidate_losses = []
+    for i, cand in enumerate(candidates):
+        with torch.no_grad():
+            loss_val = model(cand, labels=cand).loss.item()
+        candidate_losses.append(loss_val)
+        logging.info("Metrics: Candidate %d Loss: %.4f", i, loss_val)
+    avg_loss = sum(candidate_losses)/len(candidate_losses)
+    logging.info("Metrics: Candidate Losses - Avg: %.4f, Min: %.4f, Max: %.4f", avg_loss, min(candidate_losses), max(candidate_losses))
+
     best_index = torch.argmax(torch.stack(rewards)).item()
     logging.info('Selected candidate %d with reward: %.4f', best_index, rewards[best_index].item())
     best_candidate = candidates[best_index]
@@ -178,17 +193,30 @@ def self_improve(prompt):
     final_reward = mcts_r if mcts_r is not None else rewards[best_index]
     model.train()
     outputs = model(best_candidate, labels=best_candidate)
-    seq_length = best_candidate.shape[1]
-    log_prob_sum = - outputs.loss * seq_length
-    advantage = final_reward - avg_reward
-    policy_loss = - advantage * log_prob_sum
-    logging.info("Metrics: Policy Loss: %.4f", policy_loss.item())
+    logging.info("Metrics: Loss (before RL update): %.4f", outputs.loss.item())
+    loss_rl = final_reward * outputs.loss
+    logging.info("Metrics: RL Loss: %.4f", loss_rl.item())
     logging.info("Metrics: Perplexity: %.4f", torch.exp(outputs.loss).item())
     optimizer_model.zero_grad()
-    policy_loss.backward()
+    loss_rl.backward()
     optimizer_model.step()
     update_critic(best_candidate)
-    save_checkpoint()
+
+    # Prepare metrics dictionary for checkpointing
+    metrics = {
+        "candidate_rewards": {
+            "avg": sum(reward_values)/len(reward_values),
+            "min": min(reward_values),
+            "max": max(reward_values),
+        },
+        "candidate_losses": {
+            "avg": avg_loss,
+            "min": min(candidate_losses),
+            "max": max(candidate_losses),
+        }
+    }
+
+    save_checkpoint(metrics=metrics)
     return best_candidate
 
 if __name__ == '__main__':
