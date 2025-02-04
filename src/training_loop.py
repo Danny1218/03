@@ -1,4 +1,5 @@
 import logging
+import logging.config
 import torch
 import torch.nn.functional as F
 from torch.optim import Adam
@@ -6,10 +7,35 @@ from transformers import GPT2Tokenizer
 
 from src.transformer_model import model
 from src.critic import Critic
-from src.config import LEARNING_RATE, NUM_CANDIDATES, MAX_NEW_TOKENS, MCTS_SIMS, MODEL_NAME
+from src.config import LEARNING_RATE, NUM_CANDIDATES, MAX_NEW_TOKENS, MCTS_SIMS, MODEL_NAME, LOG_LEVEL, LOG_FILE
 
 # Setup logging and tokenizer
-logging.basicConfig(level=logging.INFO)
+logging_config = {
+    'version': 1,
+    'formatters': {
+         'default': {
+              'format': '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+         }
+    },
+    'handlers': {
+         'console': {
+              'class': 'logging.StreamHandler',
+              'formatter': 'default',
+              'level': LOG_LEVEL
+         },
+         'file': {
+              'class': 'logging.FileHandler',
+              'formatter': 'default',
+              'filename': LOG_FILE,
+              'level': LOG_LEVEL
+         }
+    },
+    'root': {
+         'handlers': ['console', 'file'],
+         'level': LOG_LEVEL
+    }
+}
+logging.config.dictConfig(logging_config)
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 logging.info(f"Using device: {device}")
 _tokenizer = GPT2Tokenizer.from_pretrained(MODEL_NAME)
