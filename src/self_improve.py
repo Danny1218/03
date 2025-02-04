@@ -1,6 +1,6 @@
 from torch.optim import Adam
-from transformer_model import model
-from critic import Critic
+from src.transformer_model import model
+from src.critic import Critic
 import torch  # added for self_improve function
 import torch.nn.functional as F  # added for critic update
 import logging
