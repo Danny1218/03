@@ -222,12 +222,11 @@ def self_improve(prompt):
     model.train()
     outputs = model(best_candidate, labels=best_candidate)
     logging.info("Metrics: Loss (before RL update): %.4f", outputs.loss.item())
-    loss_rl = final_reward * outputs.loss
+    loss_rl = -final_reward.detach() * outputs.loss
     logging.info("Metrics: RL Loss: %.4f", loss_rl.item())
     logging.info("Metrics: Perplexity: %.4f", torch.exp(outputs.loss).item())
-    loss = -final_reward.mean()
     optimizer_model.zero_grad()
-    loss.backward()
+    loss_rl.backward()
     torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
     optimizer_model.step()
     scheduler_model.step()
@@ -250,7 +249,7 @@ def self_improve(prompt):
     save_checkpoint(metrics=metrics)
 
     # Logging metrics
-    writer.add_scalar('Loss', loss.item(), global_step)
+    writer.add_scalar('Loss', loss_rl.item(), global_step)
     writer.add_scalar('BestReward', final_reward.item(), global_step)
     var_diversity = len(set([str(c) for c in candidates]))
     writer.add_scalar('CandidateDiversity', var_diversity, global_step)
