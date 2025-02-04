@@ -27,11 +27,19 @@ def self_improve(prompt, num_candidates=5):
     model.eval()
     candidates, rewards = [], []
     for _ in range(num_candidates):
-        with torch.no_grad():
-            cand = model.generate(prompt, max_length=50, do_sample=True)
+        try:
+            with torch.no_grad():
+                cand = model.generate(prompt, max_length=50, do_sample=True)
+            if cand is None:
+                raise ValueError("Generation returned None")
+        except Exception as e:
+            logging.error("Generation failed: %s", e)
+            continue
         out = model(cand, output_hidden_states=True)
         candidates.append(cand)
         rewards.append(critic(out.hidden_states[-1]).mean())
+    if not candidates:
+        raise RuntimeError("No valid candidates generated")
     for i, cand in enumerate(candidates):
         logging.info("Candidate %d: %s, reward: %.4f", i, _tokenizer.decode(cand[0], skip_special_tokens=True), rewards[i].item())
     best_index = torch.argmax(torch.stack(rewards)).item()
