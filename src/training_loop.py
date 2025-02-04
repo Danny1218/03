@@ -8,6 +8,7 @@ import torch
 import torch.nn.functional as F
 from torch.optim import Adam
 from transformers import GPT2Tokenizer
+from torch.optim.lr_scheduler import StepLR
 
 from src.transformer_model import model
 from src.critic import Critic
@@ -60,13 +61,18 @@ def preprocess(text):
 optimizer_model = Adam(model.parameters(), lr=LEARNING_RATE)
 optimizer_critic = Adam(critic.parameters(), lr=LEARNING_RATE)
 
-def update_critic(cand):
+# Added scheduler initialization for stability improvements
+scheduler_model = StepLR(optimizer_model, step_size=10, gamma=0.95)
+scheduler_critic = StepLR(optimizer_critic, step_size=10, gamma=0.95)
+
+def update_critic(cand, target_reward):
     bh = model(cand, output_hidden_states=True).hidden_states[-1]
-    target = torch.tensor(1.0, device=bh.device)  # baseline target as a scalar
-    loss = F.mse_loss(critic(bh).mean(), target)
     optimizer_critic.zero_grad()
+    loss = F.mse_loss(critic(bh).mean(), target_reward.detach())
     loss.backward()
+    torch.nn.utils.clip_grad_norm_(critic.parameters(), 1.0)
     optimizer_critic.step()
+    scheduler_critic.step()
 
 # Modified save_checkpoint to include metrics
 def save_checkpoint(step=None, metrics=None):
@@ -216,8 +222,10 @@ def self_improve(prompt):
     logging.info("Metrics: Perplexity: %.4f", torch.exp(outputs.loss).item())
     optimizer_model.zero_grad()
     loss_rl.backward()
+    torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
     optimizer_model.step()
-    update_critic(best_candidate)
+    scheduler_model.step()
+    update_critic(best_candidate, final_reward)
 
     # Prepare metrics dictionary for checkpointing
     metrics = {
