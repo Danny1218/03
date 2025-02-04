@@ -1,3 +1,10 @@
+import torch
+import random
+import numpy as np
+torch.manual_seed(42)
+random.seed(42)
+np.random.seed(42)
+
 if __package__ is None:
     import sys, os
     sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '..'))
@@ -159,7 +166,11 @@ def self_improve(prompt, num_candidates=5):
     loss = advantage * outputs.loss  # REINFORCE with baseline loss
     optimizer_model.zero_grad()
     loss.backward()
+    torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
     optimizer_model.step()
+    scheduler_model.step()
+    update_critic(best_candidate, rewards[best_index])
+
     # Decode the best candidate tokens into text
     return tokenizer.decode(best_candidate[0], skip_special_tokens=True)
 
@@ -240,6 +251,7 @@ def self_improve(prompt):
     loss = advantage * outputs.loss  # REINFORCE with baseline loss
     optimizer_model.zero_grad()
     loss.backward()
+    torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
     optimizer_model.step()
     scheduler_model.step()
     update_critic(best_candidate, rewards[best_index])
