@@ -20,20 +20,28 @@ else:
     from .training_loop import preprocess, _tokenizer, model, critic, optimizer_model
 
 
+def retrieve_knowledge_context(prompt):
+    # Minimal stub for external retrieval.
+    # In production, replace with API call or knowledge base query.
+    return "External context: Recent AI advances show improved factual grounding with retrieval augmentation."
+
+
 def self_improve(prompt, num_candidates=5):
     logger.info("Starting self_improve with %d candidates", num_candidates)
     candidates = []
     rewards = []
     
     # Candidate generation with error handling and timing
-    for i in range(num_candidates):
+    for _ in range(num_candidates):
+        ext_context = retrieve_knowledge_context(prompt)
+        augmented_prompt = prompt + " " + ext_context  # Augment the prompt with external knowledge
         start = time.time()
         try:
-            outputs = model.generate(prompt, max_length=50, do_sample=True)
+            outputs = model.generate(augmented_prompt, max_length=50, do_sample=True)
             candidates.append(outputs)
-            logger.info("Candidate %d generated in %.4f sec", i, time.time()-start)
+            logger.info("Candidate %d generated in %.4f sec", _, time.time()-start)
         except Exception as e:
-            logger.error("Candidate %d generation failed: %s", i, e)
+            logger.error("Candidate %d generation failed: %s", _, e)
     
     model.train()
     
