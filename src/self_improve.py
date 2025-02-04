@@ -9,6 +9,9 @@ from transformers import GPT2Tokenizer
 logging.basicConfig(level=logging.INFO)
 _tokenizer = GPT2Tokenizer.from_pretrained('gpt2')
 
+def preprocess(text):
+    return _tokenizer.encode(text, return_tensors='pt')
+
 critic = Critic()
 optimizer_model = Adam(model.parameters(), lr=1e-4)
 optimizer_critic = Adam(critic.parameters(), lr=1e-4)  # added critic optimizer
@@ -59,6 +62,6 @@ def self_improve(prompt, num_candidates=5):
 if __name__ == '__main__':
     import sys
     prompt_text = ' '.join(sys.argv[1:]) if len(sys.argv) > 1 else input('Enter prompt: ')
-    prompt = _tokenizer.encode(prompt_text, return_tensors='pt')
+    prompt = preprocess(prompt_text)  # Use the preprocess function
     improved = self_improve(prompt)
     print(f"Improved prompt: {_tokenizer.decode(improved[0], skip_special_tokens=True)}") 
