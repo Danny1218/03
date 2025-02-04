@@ -56,7 +56,6 @@ critic.to(device)
 
 # Initialize TensorBoard writer
 writer = SummaryWriter(log_dir="runs/tensorboard_logs")
-
 global_step = 0
 
 # Initialize the tokenizer globally
@@ -271,6 +270,13 @@ def self_improve(prompt):
     # Added TensorBoard logging
     writer.add_scalar("CandidateRewards/Average", avg_reward.item(), global_step)
     writer.add_scalar("Metrics/Perplexity", torch.exp(outputs.loss).item(), global_step)
+
+    # Logging metrics to TensorBoard
+    writer.add_scalar("Loss/RL", loss.item(), global_step)
+    writer.add_scalar("Loss/Total", loss.item(), global_step)
+    writer.add_scalar("Metrics/Perplexity", torch.exp(outputs.loss).item(), global_step)
+    writer.add_scalar("Reward/Average", avg_reward.item(), global_step)
+    global_step += 1
 
     return tokenizer.decode(best_candidate[0], skip_special_tokens=True)
 
