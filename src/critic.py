@@ -2,35 +2,22 @@ import torch
 from torch import nn
 
 class Critic(nn.Module):
-    def __init__(self, hidden_size=128, nhead=4, num_layers=2, dropout=0.1):
+    def __init__(self, hidden_size=128, num_heads=4):
         super().__init__()
-        # Enhanced critic using a transformer encoder for attention with dropout and additional layers
-        self.transformer = nn.TransformerEncoder(
-            nn.TransformerEncoderLayer(d_model=hidden_size, nhead=nhead, dropout=dropout),
-            num_layers=num_layers
+        # Use MultiheadAttention to refine hidden state representations
+        self.attention = nn.MultiheadAttention(embed_dim=hidden_size, num_heads=num_heads, batch_first=True)
+        # A small MLP for final reward estimation
+        self.fc = nn.Sequential(
+            nn.Linear(hidden_size, hidden_size),
+            nn.ReLU(),
+            nn.Linear(hidden_size, 1)
         )
-        self.layer1 = nn.Linear(hidden_size, hidden_size)
-        self.norm1 = nn.LayerNorm(hidden_size)
-        self.act = nn.ReLU()
-        self.fc = nn.Linear(hidden_size, 1)
-        self.register_buffer('baseline', torch.zeros(1))
-        self.decay = 0.99
 
     def forward(self, hidden_states):
         # hidden_states: [batch, seq_len, hidden_size]
-        # transpose for transformer: [seq_len, batch, hidden_size]
-        x = hidden_states.transpose(0, 1)
-        x = self.transformer(x)
-        # Aggregate information via average pooling
-        pooled = x.mean(dim=0)  
-        x = self.layer1(pooled)
-        x = self.norm1(x)
-        x = self.act(x)
-        raw_score = self.fc(x)
-        norm_score = raw_score - self.baseline
-        if self.training:
-            self.baseline.mul_(self.decay).add_((1 - self.decay) * raw_score.detach().mean())
-        return norm_score
+        attn_output, _ = self.attention(hidden_states, hidden_states, hidden_states)
+        pooled = attn_output.mean(dim=1)  # aggregate over sequence length
+        return self.fc(pooled)
 
     def compute_loss(self, predictions, targets):
         # Compute normalized MSE loss for critic training
