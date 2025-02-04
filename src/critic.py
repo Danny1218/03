@@ -4,11 +4,17 @@ import torch.nn as nn
 class Critic(nn.Module):
     def __init__(self, hidden_size=128):
         super().__init__()
-        self.fc = nn.Linear(hidden_size, 1)  # Linear layer for scoring
+        # Expanded critic with an extra linear layer and nonlinearity
+        self.net = nn.Sequential(
+            nn.Linear(hidden_size, hidden_size),
+            nn.ReLU(),  # Nonlinear activation for deeper representations
+            nn.Linear(hidden_size, 1)
+        )
 
     def forward(self, hidden_states):
-        # Average pooling over sequence dimension and apply linear layer
-        return self.fc(hidden_states.mean(dim=1)) 
+        # Use mean pooling of hidden states
+        pooled = hidden_states.mean(dim=1)
+        return self.net(pooled)
 
 if __name__ == '__main__':
     critic = Critic()
