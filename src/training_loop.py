@@ -14,6 +14,8 @@ from src.critic import Critic
 from src.config import LEARNING_RATE, NUM_CANDIDATES, MAX_NEW_TOKENS, MCTS_SIMS, MODEL_NAME, LOG_LEVEL, LOG_FILE
 
 # Setup logging and tokenizer
+_tokenizer = GPT2Tokenizer.from_pretrained(MODEL_NAME)
+_tokenizer.pad_token = _tokenizer.eos_token
 logging_config = {
     'version': 1,
     'formatters': {
@@ -42,7 +44,6 @@ logging_config = {
 logging.config.dictConfig(logging_config)
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 logging.info(f"Using device: {device}")
-_tokenizer = GPT2Tokenizer.from_pretrained(MODEL_NAME)
 
 # Move model to device
 model.to(device)
@@ -52,7 +53,7 @@ critic = Critic()
 critic.to(device)
 
 def preprocess(text):
-    tokens = _tokenizer(text, return_tensors='pt')
+    tokens = _tokenizer(text, return_tensors='pt', padding=True, truncation=True, max_length=128)
     return {k: v.to(device) for k, v in tokens.items()}
 
 # Initialize optimizers
